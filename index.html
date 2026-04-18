@@ -172,6 +172,7 @@ let markers = [];           // current markers on map
 let polylines = [];         // current paths
 let playTimer = null;
 let playing = false;
+let lastFitKey = "";        // tracks date+device to fit bounds only on change
 
 /* -------- Google Sheet CSV parsing -------- */
 
@@ -386,8 +387,13 @@ function render() {
     bounds.extend(marker.getPosition());
   });
 
-  if (!bounds.isEmpty()) {
-    map.fitBounds(bounds);
+  // Fit to ALL day points only when date/device changes, not on slider moves
+  const fitKey = date + "|" + device;
+  if (fitKey !== lastFitKey && dateFiltered.length > 0) {
+    lastFitKey = fitKey;
+    const dayBounds = new google.maps.LatLngBounds();
+    dateFiltered.forEach(p => dayBounds.extend({ lat: p.lat, lng: p.lng }));
+    map.fitBounds(dayBounds);
     google.maps.event.addListenerOnce(map, "idle", () => {
       if (map.getZoom() > 18) map.setZoom(18);
     });
@@ -523,8 +529,14 @@ async function loadData(firstTime) {
       if (!document.getElementById("dateSelect").value) populateDateSelect();
     }
     setStatus(`Updated ${new Date().toLocaleTimeString()}`, "ok");
+    const lastTs = allRows.length ? allRows[allRows.length - 1].ts : null;
+    const lastStr = lastTs ? lastTs.toLocaleString("en-GB", {
+      timeZone: "Asia/Bangkok", hour12: false,
+      day: "2-digit", month: "2-digit", year: "numeric",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    }) : "—";
     const badge = document.getElementById("dataBadge");
-    badge.textContent = `📊 ${allRows.length} rows from Sheet`;
+    badge.textContent = `📊 ${allRows.length} rows · Last: ${lastStr} (UTC+7)`;
     badge.style.display = "inline";
     render();
   } catch (e) {
