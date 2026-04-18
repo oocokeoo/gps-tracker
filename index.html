@@ -85,6 +85,12 @@
   }
   .info-bar.show { display: block; }
 
+  .data-badge {
+    background: #1e3a5f; color: #93c5fd; font-size: 12px;
+    padding: 2px 10px; border-radius: 12px; margin-left: 10px;
+    font-weight: 500; white-space: nowrap;
+  }
+
   @media (max-width: 768px) {
     .controls { grid-template-columns: 1fr; }
     .time-display { text-align: left; }
@@ -95,7 +101,10 @@
 <div id="app">
   <header>
     <h1>📍 GPS Location Tracker</h1>
-    <span id="status" class="status">Loading…</span>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span id="status" class="status">Loading…</span>
+      <span id="dataBadge" class="data-badge" style="display:none;"></span>
+    </div>
   </header>
 
   <div id="infoBar" class="info-bar"></div>
@@ -136,7 +145,7 @@
 /* =========================================================================
    CONFIG — Replace with your own values
    ========================================================================= */
-const GOOGLE_MAPS_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY_HERE";
+const GOOGLE_MAPS_API_KEY = "AIzaSyDCjkSFWPtx7Fi-A_ZuT1VoJXd_Sy-VhjU";
 
 // Your Google Sheet ID (from the URL between /d/ and /edit)
 const SHEET_ID = "1iouXFBmine7sGY9ViluOPUWTBa6wOqMUmipSQwHhKMo";
@@ -208,19 +217,25 @@ function findColumnIndex(headers, aliases) {
 }
 
 function parseRows(csvRows) {
-  if (!csvRows || csvRows.length < 2) return [];
+  if (!csvRows || csvRows.length < 1) return [];
   const headers = csvRows[0];
-  const iTs = findColumnIndex(headers, ["timestamp", "time", "datetime", "date"]);
-  const iLat = findColumnIndex(headers, ["lat", "latitude"]);
-  const iLng = findColumnIndex(headers, ["lng", "lon", "long", "longitude"]);
-  const iDev = findColumnIndex(headers, ["device", "name", "id", "user"]);
+  let iTs = findColumnIndex(headers, ["timestamp", "time", "datetime", "date"]);
+  let iLat = findColumnIndex(headers, ["lat", "latitude"]);
+  let iLng = findColumnIndex(headers, ["lng", "lon", "long", "longitude"]);
+  let iDev = findColumnIndex(headers, ["device", "name", "id", "user"]);
+  let dataStart = 1;
 
-  if (iTs < 0 || iLat < 0 || iLng < 0) {
+  // No headers found — assume positional layout:
+  // col0=local-ts, col1=ISO-ts, col2=device, col3=device+url, col4=lat, col5=lng
+  if (iTs < 0 && iLat < 0 && iLng < 0) {
+    iTs = 1; iLat = 4; iLng = 5; iDev = 2;
+    dataStart = 0;
+  } else if (iTs < 0 || iLat < 0 || iLng < 0) {
     throw new Error(`Could not find required columns. Got headers: [${headers.join(", ")}]. Need Timestamp, Lat, Lng.`);
   }
 
   const out = [];
-  for (let r = 1; r < csvRows.length; r++) {
+  for (let r = dataStart; r < csvRows.length; r++) {
     const row = csvRows[r];
     if (!row || row.length === 0) continue;
     const tsRaw = (row[iTs] || "").trim();
@@ -502,7 +517,10 @@ async function loadData(firstTime) {
       // don't blow away user's date selection, but if empty, populate
       if (!document.getElementById("dateSelect").value) populateDateSelect();
     }
-    setStatus(`Loaded ${allRows.length} points • Updated ${new Date().toLocaleTimeString()}`, "ok");
+    setStatus(`Updated ${new Date().toLocaleTimeString()}`, "ok");
+    const badge = document.getElementById("dataBadge");
+    badge.textContent = `📊 ${allRows.length} rows from Sheet`;
+    badge.style.display = "inline";
     render();
   } catch (e) {
     console.error(e);
