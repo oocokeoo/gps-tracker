@@ -217,6 +217,17 @@ function findColumnIndex(headers, aliases) {
   return -1;
 }
 
+// Parse "D/M/YYYY, H:MM:SS" (col0 Thai locale) as UTC+7
+function parseThaiDate(str) {
+  const m = str.match(/(\d+)\/(\d+)\/(\d+),?\s*(\d+):(\d+):(\d+)/);
+  if (!m) return null;
+  const [, d, mo, y, h, mi, s] = m.map(Number);
+  return new Date(
+    `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}` +
+    `T${String(h).padStart(2,'0')}:${String(mi).padStart(2,'0')}:${String(s).padStart(2,'0')}+07:00`
+  );
+}
+
 function parseRows(csvRows) {
   if (!csvRows || csvRows.length < 1) return [];
   const headers = csvRows[0];
@@ -225,12 +236,13 @@ function parseRows(csvRows) {
   let iLng = findColumnIndex(headers, ["lng", "lon", "long", "longitude"]);
   let iDev = findColumnIndex(headers, ["device", "name", "id", "user"]);
   let dataStart = 1;
+  let useThaiParser = false;
 
-  // No headers found — assume positional layout:
-  // col0=local-ts, col1=ISO-ts, col2=device, col3=device+url, col4=lat, col5=lng
+  // No headers — positional layout: col0=Thai-ts, col2=device, col4=lat, col5=lng
   if (iTs < 0 && iLat < 0 && iLng < 0) {
-    iTs = 1; iLat = 4; iLng = 5; iDev = 2;
+    iTs = 0; iLat = 4; iLng = 5; iDev = 2;
     dataStart = 0;
+    useThaiParser = true;
   } else if (iTs < 0 || iLat < 0 || iLng < 0) {
     throw new Error(`Could not find required columns. Got headers: [${headers.join(", ")}]. Need Timestamp, Lat, Lng.`);
   }
@@ -245,13 +257,14 @@ function parseRows(csvRows) {
     const devRaw = iDev >= 0 ? ((row[iDev] || "").trim() || "default") : "default";
     if (!tsRaw || !latRaw || !lngRaw) continue;
 
-    const ts = new Date(tsRaw.replace(" ", "T"));
+    const ts = useThaiParser
+      ? parseThaiDate(tsRaw)
+      : new Date(tsRaw.replace(" ", "T") + "+07:00");
     const lat = parseFloat(latRaw);
     const lng = parseFloat(lngRaw);
-    if (isNaN(ts.getTime()) || isNaN(lat) || isNaN(lng)) continue;
-    out.push({ ts, lat, lng, device: devRaw, rawTs: (row[0] || "").trim() });
+    if (!ts || isNaN(ts.getTime()) || isNaN(lat) || isNaN(lng)) continue;
+    out.push({ ts, lat, lng, device: devRaw, rawTs: tsRaw });
   }
-  // sort by time
   out.sort((a, b) => a.ts - b.ts);
   return out;
 }
@@ -280,11 +293,7 @@ function showInfo(msg) {
 function hideInfo() { document.getElementById("infoBar").classList.remove("show"); }
 
 function toDateStr(d) {
-  // yyyy-mm-dd in local time
-  const y = d.getFullYear();
-  const m = String(d.getMonth()+1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return d.toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" }); // YYYY-MM-DD in UTC+7
 }
 function minutesOfDay(d) { return d.getHours() * 60 + d.getMinutes(); }
 function fmtHM(mins) {
@@ -317,7 +326,7 @@ function render() {
 
   // Filter by date + device, sorted by time
   const dateFiltered = allRows.filter(r => {
-    if (toDateStr(r.ts) !== date) return false;
+    if (date !== "__all__" && toDateStr(r.ts) !== date) return false;
     if (device !== "__all__" && r.device !== device) return false;
     return true;
   });
@@ -436,17 +445,27 @@ function renderLegend(byDevice) {
 /* -------- Controls -------- */
 
 function populateDateSelect() {
-  const dates = Array.from(new Set(allRows.map(r => toDateStr(r.ts)))).sort();
+  const dateCounts = {};
+  allRows.forEach(r => {
+    const d = toDateStr(r.ts);
+    dateCounts[d] = (dateCounts[d] || 0) + 1;
+  });
+  const dates = Object.keys(dateCounts).sort();
   const sel = document.getElementById("dateSelect");
   const prev = sel.value;
   sel.innerHTML = "";
   dates.forEach(d => {
     const opt = document.createElement("option");
-    opt.value = d; opt.textContent = d;
+    opt.value = d;
+    opt.textContent = `${d} (${dateCounts[d]} pts)`;
     sel.appendChild(opt);
   });
-  // prefer previous selection, else latest date
-  if (dates.includes(prev)) sel.value = prev;
+  const allOpt = document.createElement("option");
+  allOpt.value = "__all__";
+  allOpt.textContent = `All days (${allRows.length} pts)`;
+  sel.appendChild(allOpt);
+
+  if (prev && (dates.includes(prev) || prev === "__all__")) sel.value = prev;
   else if (dates.length) sel.value = dates[dates.length - 1];
 }
 
