@@ -244,7 +244,7 @@ function parseRows(csvRows) {
     const devRaw = iDev >= 0 ? ((row[iDev] || "").trim() || "default") : "default";
     if (!tsRaw || !latRaw || !lngRaw) continue;
 
-    const ts = new Date(tsRaw);
+    const ts = new Date(tsRaw.replace(" ", "T"));
     const lat = parseFloat(latRaw);
     const lng = parseFloat(lngRaw);
     if (isNaN(ts.getTime()) || isNaN(lat) || isNaN(lng)) continue;
