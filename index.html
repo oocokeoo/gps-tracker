@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>GPS Location Tracker</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  header {
+    background: #1f2937; color: #fff; padding: 10px 16px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+  .status { font-size: 12px; opacity: 0.8; }
+  .status.ok { color: #34d399; }
+  .status.err { color: #f87171; }
+
+  .controls {
+    background: #f3f4f6; border-bottom: 1px solid #e5e7eb;
+    padding: 12px 16px; display: grid;
+    grid-template-columns: auto auto 1fr auto; gap: 14px; align-items: center;
+  }
+  .control-group { display: flex; align-items: center; gap: 8px; }
+  .control-group label { font-size: 13px; font-weight: 500; color: #374151; }
+  .control-group select, .control-group input[type="date"] {
+    padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px;
+    font-size: 13px; background: #fff;
+  }
+
+  .slider-wrap { flex: 1; min-width: 200px; }
+  .slider-labels { display: flex; justify-content: space-between; font-size: 12px; color: #6b7280; margin-bottom: 2px; }
+  .slider-range { position: relative; height: 36px; }
+  .slider-range input[type="range"] {
+    -webkit-appearance: none; appearance: none;
+    position: absolute; width: 100%; height: 6px;
+    background: none; pointer-events: none; top: 14px; margin: 0;
+  }
+  .slider-range .track {
+    position: absolute; top: 14px; width: 100%; height: 6px;
+    background: #e5e7eb; border-radius: 4px;
+  }
+  .slider-range .track-fill {
+    position: absolute; top: 14px; height: 6px;
+    background: #3b82f6; border-radius: 4px;
+  }
+  .slider-range input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    height: 18px; width: 18px; border-radius: 50%;
+    background: #3b82f6; border: 2px solid #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    pointer-events: auto; cursor: pointer;
+  }
+  .slider-range input[type="range"]::-moz-range-thumb {
+    height: 18px; width: 18px; border-radius: 50%;
+    background: #3b82f6; border: 2px solid #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    pointer-events: auto; cursor: pointer;
+  }
+
+  .time-display { font-size: 13px; font-weight: 500; color: #1f2937; min-width: 180px; text-align: right; }
+
+  button {
+    padding: 6px 12px; background: #3b82f6; color: white;
+    border: none; border-radius: 6px; cursor: pointer; font-size: 13px;
+  }
+  button:hover { background: #2563eb; }
+  button.play { min-width: 70px; }
+
+  #map { flex: 1; width: 100%; }
+
+  .legend {
+    position: absolute; bottom: 20px; right: 20px; background: white;
+    padding: 10px 14px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    font-size: 12px; max-height: 200px; overflow-y: auto;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+  .legend-color { width: 12px; height: 12px; border-radius: 50%; }
+
+  .info-bar {
+    background: #fef3c7; color: #78350f; padding: 8px 16px; font-size: 13px;
+    border-bottom: 1px solid #fde68a; display: none;
+  }
+  .info-bar.show { display: block; }
+
+  @media (max-width: 768px) {
+    .controls { grid-template-columns: 1fr; }
+    .time-display { text-align: left; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>📍 GPS Location Tracker</h1>
+    <span id="status" class="status">Loading…</span>
+  </header>
+
+  <div id="infoBar" class="info-bar"></div>
+
+  <div class="controls">
+    <div class="control-group">
+      <label>Date:</label>
+      <select id="dateSelect"></select>
+    </div>
+    <div class="control-group">
+      <label>Device:</label>
+      <select id="deviceSelect">
+        <option value="__all__">All devices</option>
+      </select>
+    </div>
+    <div class="slider-wrap">
+      <div class="slider-labels">
+        <span id="minLabel">--:--</span>
+        <span id="maxLabel">--:--</span>
+      </div>
+      <div class="slider-range">
+        <div class="track"></div>
+        <div class="track-fill" id="trackFill"></div>
+        <input type="range" id="rangeMin" min="0" max="1439" value="0" step="1" />
+        <input type="range" id="rangeMax" min="0" max="1439" value="1439" step="1" />
+      </div>
+    </div>
+    <div class="control-group">
+      <button id="playBtn" class="play">▶ Play</button>
+      <span id="timeDisplay" class="time-display">--:-- → --:--</span>
+    </div>
+  </div>
+
+  <div id="map"></div>
+</div>
+
+<script>
+/* =========================================================================
+   CONFIG — Replace with your own values
+   ========================================================================= */
+const GOOGLE_MAPS_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY_HERE";
+
+// Your Google Sheet ID (from the URL between /d/ and /edit)
+const SHEET_ID = "1iouXFBmine7sGY9ViluOPUWTBa6wOqMUmipSQwHhKMo";
+const SHEET_GID = "0"; // the gid from the URL (the tab id)
+
+// Expected columns in the sheet (first row = headers). Header names are
+// matched case-insensitively; common aliases are supported.
+// Expected: Timestamp, Lat (Latitude), Lng (Longitude), Device (Name)
+
+// How often to re-fetch the sheet for realtime updates (ms)
+const REFRESH_INTERVAL_MS = 15000;
+
+/* ========================================================================= */
+
+const COLORS = [
+  "#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6",
+  "#ec4899", "#14b8a6", "#f97316", "#6366f1", "#84cc16"
+];
+
+let map;
+let allRows = [];           // all parsed rows: {ts: Date, lat, lng, device}
+let deviceColors = {};      // device name -> color
+let markers = [];           // current markers on map
+let polylines = [];         // current paths
+let playTimer = null;
+let playing = false;
+
+/* -------- Google Sheet CSV parsing -------- */
+
+function csvUrl() {
+  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=${SHEET_GID}&_cb=${Date.now()}`;
+}
+
+// Minimal robust CSV parser (handles quoted fields + commas + escaped quotes)
+function parseCSV(text) {
+  const rows = [];
+  let cur = [], field = "", inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i+1] === '"') { field += '"'; i++; }
+        else inQ = false;
+      } else field += c;
+    } else {
+      if (c === '"') inQ = true;
+      else if (c === ',') { cur.push(field); field = ""; }
+      else if (c === '\n') { cur.push(field); rows.push(cur); cur = []; field = ""; }
+      else if (c === '\r') { /* skip */ }
+      else field += c;
+    }
+  }
+  if (field.length > 0 || cur.length > 0) { cur.push(field); rows.push(cur); }
+  return rows;
+}
+
+function findColumnIndex(headers, aliases) {
+  const low = headers.map(h => (h || "").toString().trim().toLowerCase());
+  for (const a of aliases) {
+    const idx = low.indexOf(a.toLowerCase());
+    if (idx >= 0) return idx;
+  }
+  // partial match
+  for (const a of aliases) {
+    const idx = low.findIndex(h => h.includes(a.toLowerCase()));
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+function parseRows(csvRows) {
+  if (!csvRows || csvRows.length < 2) return [];
+  const headers = csvRows[0];
+  const iTs = findColumnIndex(headers, ["timestamp", "time", "datetime", "date"]);
+  const iLat = findColumnIndex(headers, ["lat", "latitude"]);
+  const iLng = findColumnIndex(headers, ["lng", "lon", "long", "longitude"]);
+  const iDev = findColumnIndex(headers, ["device", "name", "id", "user"]);
+
+  if (iTs < 0 || iLat < 0 || iLng < 0) {
+    throw new Error(`Could not find required columns. Got headers: [${headers.join(", ")}]. Need Timestamp, Lat, Lng.`);
+  }
+
+  const out = [];
+  for (let r = 1; r < csvRows.length; r++) {
+    const row = csvRows[r];
+    if (!row || row.length === 0) continue;
+    const tsRaw = (row[iTs] || "").trim();
+    const latRaw = (row[iLat] || "").trim();
+    const lngRaw = (row[iLng] || "").trim();
+    const devRaw = iDev >= 0 ? ((row[iDev] || "").trim() || "default") : "default";
+    if (!tsRaw || !latRaw || !lngRaw) continue;
+
+    const ts = new Date(tsRaw);
+    const lat = parseFloat(latRaw);
+    const lng = parseFloat(lngRaw);
+    if (isNaN(ts.getTime()) || isNaN(lat) || isNaN(lng)) continue;
+    out.push({ ts, lat, lng, device: devRaw });
+  }
+  // sort by time
+  out.sort((a, b) => a.ts - b.ts);
+  return out;
+}
+
+async function fetchSheet() {
+  const res = await fetch(csvUrl(), { cache: "no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+  const rows = parseCSV(text);
+  return parseRows(rows);
+}
+
+/* -------- UI helpers -------- */
+
+function setStatus(msg, kind) {
+  const el = document.getElementById("status");
+  el.textContent = msg;
+  el.className = "status " + (kind || "");
+}
+
+function showInfo(msg) {
+  const el = document.getElementById("infoBar");
+  el.textContent = msg;
+  el.classList.add("show");
+}
+function hideInfo() { document.getElementById("infoBar").classList.remove("show"); }
+
+function toDateStr(d) {
+  // yyyy-mm-dd in local time
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function minutesOfDay(d) { return d.getHours() * 60 + d.getMinutes(); }
+function fmtHM(mins) {
+  const h = Math.floor(mins/60), m = mins%60;
+  return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
+}
+
+/* -------- Render -------- */
+
+function getColor(device) {
+  if (!deviceColors[device]) {
+    const idx = Object.keys(deviceColors).length % COLORS.length;
+    deviceColors[device] = COLORS[idx];
+  }
+  return deviceColors[device];
+}
+
+function clearMapLayers() {
+  markers.forEach(m => m.setMap(null));
+  polylines.forEach(p => p.setMap(null));
+  markers = [];
+  polylines = [];
+}
+
+function render() {
+  if (!map || !allRows.length) return;
+
+  const date = document.getElementById("dateSelect").value;
+  const device = document.getElementById("deviceSelect").value;
+  const minMin = parseInt(document.getElementById("rangeMin").value, 10);
+  const maxMin = parseInt(document.getElementById("rangeMax").value, 10);
+
+  document.getElementById("minLabel").textContent = fmtHM(minMin);
+  document.getElementById("maxLabel").textContent = fmtHM(maxMin);
+  document.getElementById("timeDisplay").textContent = `${fmtHM(minMin)} → ${fmtHM(maxMin)}`;
+
+  // slider fill
+  const fill = document.getElementById("trackFill");
+  fill.style.left = (minMin/1439*100) + "%";
+  fill.style.width = ((maxMin-minMin)/1439*100) + "%";
+
+  // filter
+  const filtered = allRows.filter(r => {
+    if (toDateStr(r.ts) !== date) return false;
+    const m = minutesOfDay(r.ts);
+    if (m < minMin || m > maxMin) return false;
+    if (device !== "__all__" && r.device !== device) return false;
+    return true;
+  });
+
+  clearMapLayers();
+
+  // group by device for polylines
+  const byDevice = {};
+  filtered.forEach(r => {
+    if (!byDevice[r.device]) byDevice[r.device] = [];
+    byDevice[r.device].push(r);
+  });
+
+  const bounds = new google.maps.LatLngBounds();
+
+  Object.keys(byDevice).forEach(dev => {
+    const points = byDevice[dev];
+    const color = getColor(dev);
+
+    // polyline for path
+    if (points.length > 1) {
+      const path = points.map(p => ({ lat: p.lat, lng: p.lng }));
+      const pl = new google.maps.Polyline({
+        path, map,
+        strokeColor: color, strokeOpacity: 0.8, strokeWeight: 3
+      });
+      polylines.push(pl);
+    }
+
+    // markers at every point
+    points.forEach((p, idx) => {
+      const isStart = idx === 0;
+      const isEnd = idx === points.length - 1;
+      const marker = new google.maps.Marker({
+        position: { lat: p.lat, lng: p.lng },
+        map,
+        title: `${dev}\n${p.ts.toLocaleString()}\n${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: (isStart || isEnd) ? 8 : 5,
+          fillColor: color,
+          fillOpacity: isEnd ? 1 : 0.8,
+          strokeColor: "#fff",
+          strokeWeight: 2
+        }
+      });
+      const info = new google.maps.InfoWindow({
+        content: `<div style="font-size:13px;">
+          <b>${dev}</b><br/>
+          ${p.ts.toLocaleString()}<br/>
+          ${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}
+        </div>`
+      });
+      marker.addListener("click", () => info.open(map, marker));
+      markers.push(marker);
+      bounds.extend(marker.getPosition());
+    });
+  });
+
+  // Fit bounds only when we have points and only if user hasn't zoomed much
+  if (!bounds.isEmpty()) {
+    map.fitBounds(bounds);
+    // avoid over-zoom when only one point
+    const listener = google.maps.event.addListenerOnce(map, "idle", () => {
+      if (map.getZoom() > 18) map.setZoom(18);
+    });
+  }
+
+  // Legend
+  renderLegend(byDevice);
+
+  if (filtered.length === 0) {
+    showInfo("No points match the current filter. Try a different date, device, or widen the time range.");
+  } else {
+    hideInfo();
+  }
+}
+
+function renderLegend(byDevice) {
+  let el = document.getElementById("legend");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "legend";
+    el.className = "legend";
+    document.getElementById("map").appendChild(el);
+  }
+  const devs = Object.keys(byDevice);
+  if (devs.length === 0) { el.style.display = "none"; return; }
+  el.style.display = "block";
+  el.innerHTML = "<div style='font-weight:600;margin-bottom:4px;'>Devices</div>" +
+    devs.map(d => {
+      const c = getColor(d);
+      const count = byDevice[d].length;
+      return `<div class="legend-item"><span class="legend-color" style="background:${c}"></span>${d} (${count})</div>`;
+    }).join("");
+}
+
+/* -------- Controls -------- */
+
+function populateDateSelect() {
+  const dates = Array.from(new Set(allRows.map(r => toDateStr(r.ts)))).sort();
+  const sel = document.getElementById("dateSelect");
+  const prev = sel.value;
+  sel.innerHTML = "";
+  dates.forEach(d => {
+    const opt = document.createElement("option");
+    opt.value = d; opt.textContent = d;
+    sel.appendChild(opt);
+  });
+  // prefer previous selection, else latest date
+  if (dates.includes(prev)) sel.value = prev;
+  else if (dates.length) sel.value = dates[dates.length - 1];
+}
+
+function populateDeviceSelect() {
+  const devs = Array.from(new Set(allRows.map(r => r.device))).sort();
+  const sel = document.getElementById("deviceSelect");
+  const prev = sel.value;
+  sel.innerHTML = '<option value="__all__">All devices</option>';
+  devs.forEach(d => {
+    const opt = document.createElement("option");
+    opt.value = d; opt.textContent = d;
+    sel.appendChild(opt);
+  });
+  if (prev && (prev === "__all__" || devs.includes(prev))) sel.value = prev;
+}
+
+function wireControls() {
+  document.getElementById("dateSelect").addEventListener("change", render);
+  document.getElementById("deviceSelect").addEventListener("change", render);
+
+  const rMin = document.getElementById("rangeMin");
+  const rMax = document.getElementById("rangeMax");
+  const syncRange = (which) => {
+    let a = parseInt(rMin.value, 10), b = parseInt(rMax.value, 10);
+    if (a > b) {
+      if (which === "min") rMax.value = a;
+      else rMin.value = b;
+    }
+    render();
+  };
+  rMin.addEventListener("input", () => syncRange("min"));
+  rMax.addEventListener("input", () => syncRange("max"));
+
+  document.getElementById("playBtn").addEventListener("click", togglePlay);
+}
+
+/* -------- Play / Animation --------
+   When playing, we keep a fixed window width and slide it forward in 1-minute
+   steps. This lets you see location movement over time.
+*/
+function togglePlay() {
+  playing = !playing;
+  const btn = document.getElementById("playBtn");
+  btn.textContent = playing ? "⏸ Pause" : "▶ Play";
+  if (playing) {
+    playTimer = setInterval(stepPlay, 300);
+  } else {
+    clearInterval(playTimer); playTimer = null;
+  }
+}
+function stepPlay() {
+  const rMin = document.getElementById("rangeMin");
+  const rMax = document.getElementById("rangeMax");
+  let a = parseInt(rMin.value, 10), b = parseInt(rMax.value, 10);
+  const w = Math.max(1, b - a);
+  a += 1; b = a + w;
+  if (b > 1439) { a = 0; b = w; }
+  rMin.value = a; rMax.value = b;
+  render();
+}
+
+/* -------- Bootstrapping -------- */
+
+async function loadData(firstTime) {
+  try {
+    const rows = await fetchSheet();
+    allRows = rows;
+    if (firstTime) {
+      populateDateSelect();
+      populateDeviceSelect();
+    } else {
+      // preserve selections; just update device list in case new devices appeared
+      populateDeviceSelect();
+      // don't blow away user's date selection, but if empty, populate
+      if (!document.getElementById("dateSelect").value) populateDateSelect();
+    }
+    setStatus(`Loaded ${allRows.length} points • Updated ${new Date().toLocaleTimeString()}`, "ok");
+    render();
+  } catch (e) {
+    console.error(e);
+    setStatus("Error: " + e.message, "err");
+    showInfo("Could not load sheet. Make sure it's shared as 'Anyone with the link can view'. Details: " + e.message);
+  }
+}
+
+function initMap() {
+  map = new google.maps.Map(document.getElementById("map"), {
+    center: { lat: 13.7563, lng: 100.5018 }, // Bangkok as default; will recenter
+    zoom: 12,
+    mapTypeControl: true,
+    streetViewControl: false,
+    fullscreenControl: true
+  });
+  wireControls();
+  loadData(true);
+  setInterval(() => loadData(false), REFRESH_INTERVAL_MS);
+}
+window.initMap = initMap;
+
+// Load Google Maps
+(function loadMaps() {
+  if (GOOGLE_MAPS_API_KEY === "YOUR_GOOGLE_MAPS_API_KEY_HERE") {
+    document.getElementById("map").innerHTML =
+      `<div style="padding:40px;text-align:center;font-family:sans-serif;">
+        <h2>⚠️ Google Maps API key required</h2>
+        <p>Open <code>index.html</code> and replace <code>YOUR_GOOGLE_MAPS_API_KEY_HERE</code> with your key.</p>
+        <p>See the setup guide (<code>SETUP.md</code>) for step-by-step instructions.</p>
+      </div>`;
+    setStatus("Missing API key", "err");
+    return;
+  }
+  const s = document.createElement("script");
+  s.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&callback=initMap&loading=async`;
+  s.async = true; s.defer = true;
+  document.head.appendChild(s);
+})();
+</script>
+</body>
+</html>
