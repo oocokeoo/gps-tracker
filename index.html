@@ -249,7 +249,7 @@ function parseRows(csvRows) {
     const lat = parseFloat(latRaw);
     const lng = parseFloat(lngRaw);
     if (isNaN(ts.getTime()) || isNaN(lat) || isNaN(lng)) continue;
-    out.push({ ts, lat, lng, device: devRaw });
+    out.push({ ts, lat, lng, device: devRaw, rawTs: (row[0] || "").trim() });
   }
   // sort by time
   out.sort((a, b) => a.ts - b.ts);
@@ -529,14 +529,9 @@ async function loadData(firstTime) {
       if (!document.getElementById("dateSelect").value) populateDateSelect();
     }
     setStatus(`Updated ${new Date().toLocaleTimeString()}`, "ok");
-    const lastTs = allRows.length ? allRows[allRows.length - 1].ts : null;
-    const lastStr = lastTs ? lastTs.toLocaleString("en-GB", {
-      timeZone: "Asia/Bangkok", hour12: false,
-      day: "2-digit", month: "2-digit", year: "numeric",
-      hour: "2-digit", minute: "2-digit", second: "2-digit"
-    }) : "—";
+    const lastRaw = allRows.length ? allRows[allRows.length - 1].rawTs : "—";
     const badge = document.getElementById("dataBadge");
-    badge.textContent = `📊 ${allRows.length} rows · Last: ${lastStr} (UTC+7)`;
+    badge.textContent = `📊 ${allRows.length} rows · Last: ${lastRaw}`;
     badge.style.display = "inline";
     render();
   } catch (e) {
