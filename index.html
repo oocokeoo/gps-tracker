@@ -128,8 +128,8 @@
       <div class="slider-range">
         <div class="track"></div>
         <div class="track-fill" id="trackFill"></div>
-        <input type="range" id="rangeMin" min="0" max="1439" value="0" step="1" />
-        <input type="range" id="rangeMax" min="0" max="1439" value="1439" step="1" />
+        <input type="range" id="rangeMin" min="1" max="100" value="1" step="1" />
+        <input type="range" id="rangeMax" min="1" max="100" value="100" step="1" />
       </div>
     </div>
     <div class="control-group">
@@ -303,9 +303,7 @@ function getColor(device) {
 
 function clearMapLayers() {
   markers.forEach(m => m.setMap(null));
-  polylines.forEach(p => p.setMap(null));
   markers = [];
-  polylines = [];
 }
 
 function render() {
@@ -313,96 +311,98 @@ function render() {
 
   const date = document.getElementById("dateSelect").value;
   const device = document.getElementById("deviceSelect").value;
-  const minMin = parseInt(document.getElementById("rangeMin").value, 10);
-  const maxMin = parseInt(document.getElementById("rangeMax").value, 10);
+  const rMin = document.getElementById("rangeMin");
+  const rMax = document.getElementById("rangeMax");
 
-  document.getElementById("minLabel").textContent = fmtHM(minMin);
-  document.getElementById("maxLabel").textContent = fmtHM(maxMin);
-  document.getElementById("timeDisplay").textContent = `${fmtHM(minMin)} → ${fmtHM(maxMin)}`;
-
-  // slider fill
-  const fill = document.getElementById("trackFill");
-  fill.style.left = (minMin/1439*100) + "%";
-  fill.style.width = ((maxMin-minMin)/1439*100) + "%";
-
-  // filter
-  const filtered = allRows.filter(r => {
+  // Filter by date + device, sorted by time
+  const dateFiltered = allRows.filter(r => {
     if (toDateStr(r.ts) !== date) return false;
-    const m = minutesOfDay(r.ts);
-    if (m < minMin || m > maxMin) return false;
     if (device !== "__all__" && r.device !== device) return false;
     return true;
   });
 
-  clearMapLayers();
+  const total = dateFiltered.length;
 
-  // group by device for polylines
-  const byDevice = {};
-  filtered.forEach(r => {
-    if (!byDevice[r.device]) byDevice[r.device] = [];
-    byDevice[r.device].push(r);
-  });
+  // Update slider bounds to match point count
+  rMin.max = total || 1;
+  rMax.max = total || 1;
+
+  let minIdx = Math.min(parseInt(rMin.value, 10), total || 1);
+  let maxIdx = Math.min(parseInt(rMax.value, 10), total || 1);
+  if (minIdx < 1) minIdx = 1;
+  if (maxIdx < minIdx) maxIdx = minIdx;
+  rMin.value = minIdx;
+  rMax.value = maxIdx;
+
+  document.getElementById("minLabel").textContent = `#${minIdx}`;
+  document.getElementById("maxLabel").textContent = `#${maxIdx}`;
+  document.getElementById("timeDisplay").textContent = `Point ${minIdx} → ${maxIdx} of ${total}`;
+
+  // slider fill
+  const fill = document.getElementById("trackFill");
+  fill.style.left = ((minIdx - 1) / (total || 1) * 100) + "%";
+  fill.style.width = ((maxIdx - minIdx + 1) / (total || 1) * 100) + "%";
+
+  // Slice to selected index range (1-based)
+  const filtered = dateFiltered.slice(minIdx - 1, maxIdx);
+
+  clearMapLayers();
 
   const bounds = new google.maps.LatLngBounds();
 
-  Object.keys(byDevice).forEach(dev => {
-    const points = byDevice[dev];
-    const color = getColor(dev);
+  filtered.forEach((p, i) => {
+    const num = minIdx + i;
+    const color = getColor(p.device);
 
-    // polyline for path
-    if (points.length > 1) {
-      const path = points.map(p => ({ lat: p.lat, lng: p.lng }));
-      const pl = new google.maps.Polyline({
-        path, map,
-        strokeColor: color, strokeOpacity: 0.8, strokeWeight: 3
-      });
-      polylines.push(pl);
-    }
-
-    // markers at every point
-    points.forEach((p, idx) => {
-      const isStart = idx === 0;
-      const isEnd = idx === points.length - 1;
-      const marker = new google.maps.Marker({
-        position: { lat: p.lat, lng: p.lng },
-        map,
-        title: `${dev}\n${p.ts.toLocaleString()}\n${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`,
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: (isStart || isEnd) ? 8 : 5,
-          fillColor: color,
-          fillOpacity: isEnd ? 1 : 0.8,
-          strokeColor: "#fff",
-          strokeWeight: 2
-        }
-      });
-      const info = new google.maps.InfoWindow({
-        content: `<div style="font-size:13px;">
-          <b>${dev}</b><br/>
-          ${p.ts.toLocaleString()}<br/>
-          ${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}
-        </div>`
-      });
-      marker.addListener("click", () => info.open(map, marker));
-      markers.push(marker);
-      bounds.extend(marker.getPosition());
+    const marker = new google.maps.Marker({
+      position: { lat: p.lat, lng: p.lng },
+      map,
+      title: `#${num} ${p.device}\n${p.ts.toLocaleString()}`,
+      label: {
+        text: String(num),
+        color: "#fff",
+        fontSize: "11px",
+        fontWeight: "bold"
+      },
+      icon: {
+        path: google.maps.SymbolPath.CIRCLE,
+        scale: 14,
+        fillColor: color,
+        fillOpacity: 0.9,
+        strokeColor: "#fff",
+        strokeWeight: 2
+      }
     });
+
+    const info = new google.maps.InfoWindow({
+      content: `<div style="font-size:13px;">
+        <b>#${num} — ${p.device}</b><br/>
+        ${p.ts.toLocaleString()}<br/>
+        ${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}
+      </div>`
+    });
+    marker.addListener("click", () => info.open(map, marker));
+    markers.push(marker);
+    bounds.extend(marker.getPosition());
   });
 
-  // Fit bounds only when we have points and only if user hasn't zoomed much
   if (!bounds.isEmpty()) {
     map.fitBounds(bounds);
-    // avoid over-zoom when only one point
-    const listener = google.maps.event.addListenerOnce(map, "idle", () => {
+    google.maps.event.addListenerOnce(map, "idle", () => {
       if (map.getZoom() > 18) map.setZoom(18);
     });
   }
 
   // Legend
+  const byDevice = {};
+  filtered.forEach(p => {
+    if (!byDevice[p.device]) byDevice[p.device] = [];
+    byDevice[p.device].push(p);
+  });
   renderLegend(byDevice);
 
   if (filtered.length === 0) {
-    showInfo("No points match the current filter. Try a different date, device, or widen the time range.");
+    showInfo("No points match the current filter. Try a different date or device.");
   } else {
     hideInfo();
   }
@@ -458,7 +458,11 @@ function populateDeviceSelect() {
 }
 
 function wireControls() {
-  document.getElementById("dateSelect").addEventListener("change", render);
+  document.getElementById("dateSelect").addEventListener("change", () => {
+    document.getElementById("rangeMin").value = 1;
+    document.getElementById("rangeMax").value = 100;
+    render();
+  });
   document.getElementById("deviceSelect").addEventListener("change", render);
 
   const rMin = document.getElementById("rangeMin");
@@ -494,10 +498,11 @@ function togglePlay() {
 function stepPlay() {
   const rMin = document.getElementById("rangeMin");
   const rMax = document.getElementById("rangeMax");
+  const maxVal = parseInt(rMax.max, 10) || 1;
   let a = parseInt(rMin.value, 10), b = parseInt(rMax.value, 10);
-  const w = Math.max(1, b - a);
+  const w = Math.max(0, b - a);
   a += 1; b = a + w;
-  if (b > 1439) { a = 0; b = w; }
+  if (b > maxVal) { a = 1; b = 1 + w; }
   rMin.value = a; rMax.value = b;
   render();
 }
